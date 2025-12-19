@@ -1,3 +1,4 @@
+// deno-lint-ignore-file no-import-prefix
 import { assertEquals, assertNotEquals } from "jsr:@std/assert@1.0.16"
 import { mockBin } from "./main.ts"
 
