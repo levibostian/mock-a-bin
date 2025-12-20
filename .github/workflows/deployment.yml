@@ -33,5 +33,5 @@ jobs:
           get_latest_release_current_branch: deno run --allow-all --quiet jsr:@levibostian/decaf-script-github-releases get
           get_next_release_version: deno run --allow-all --quiet jsr:@levibostian/decaf-script-conventional-commits
           deploy: |
-            deno run --allow-all --quiet jsr:@levibostian/decaf-script-jsr            
+            deno run --allow-all --quiet jsr:@levibostian/decaf-script-jsr --allow-dirty
             deno run --allow-all --quiet jsr:@levibostian/decaf-script-github-releases set
