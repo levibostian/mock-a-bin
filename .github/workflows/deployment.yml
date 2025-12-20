@@ -1,0 +1,37 @@
+on: 
+  push:
+    branches: [main]
+  # This tool encourages you to run it on pull requests to test the deployment process.
+  pull_request:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # If your deploy script that you write needs to push a git commit, git tag, or create a GitHub Release.
+      pull-requests: write # If you enable pull request comments (they are enabled by default).
+      id-token: write # required by jsr and npm for publishing package 
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Deno
+        uses: asdf-vm/actions/install@v4
+
+      # required for OIDC authentication with npm
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 'lts/*'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm install -g npm@latest # required to get the latest OIDC support
+      
+      - uses: levibostian/decaf@0.9.0
+        env:
+          # required to use 'gh' CLI in my step scripts. 
+          GH_TOKEN: ${{ github.token }}      
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          get_latest_release_current_branch: deno run --allow-all --quiet jsr:@levibostian/decaf-script-github-releases get
+          get_next_release_version: deno run --allow-all --quiet jsr:@levibostian/decaf-script-conventional-commits
+          deploy: |
+            deno run --allow-all --quiet jsr:@levibostian/decaf-script-jsr            
+            deno run --allow-all --quiet jsr:@levibostian/decaf-script-github-releases set
