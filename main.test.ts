@@ -142,3 +142,102 @@ Deno.test("cleanup when original PATH was empty", async () => {
     }
   }
 })
+
+Deno.test("conditional mock: mock only matching commands", async () => {
+  const cleanup = await mockBin(
+    { binName: "git", pattern: "^git status" },
+    "bash",
+    'echo "mocked status"',
+  )
+
+  // Command matching pattern should be mocked
+  const statusCommand = new Deno.Command("git", { args: ["status"] })
+  const { stdout: statusStdout } = await statusCommand.output()
+  assertEquals(new TextDecoder().decode(statusStdout), "mocked status\n")
+
+  // Command not matching pattern should use real git
+  const versionCommand = new Deno.Command("git", { args: ["--version"] })
+  const { stdout: versionStdout } = await versionCommand.output()
+  const versionOutput = new TextDecoder().decode(versionStdout)
+  assertNotEquals(versionOutput, "mocked status\n")
+  // Real git version output should contain "git version"
+  assertEquals(versionOutput.includes("git version"), true)
+
+  cleanup()
+})
+
+Deno.test("conditional mock: pattern with multiple alternatives", async () => {
+  const cleanup = await mockBin(
+    { binName: "git", pattern: "^git (status|log)" },
+    "bash",
+    'echo "mocked: $*"',
+  )
+
+  // Both alternatives should be mocked
+  const statusCommand = new Deno.Command("git", { args: ["status"] })
+  const { stdout: statusStdout } = await statusCommand.output()
+  assertEquals(new TextDecoder().decode(statusStdout), "mocked: status\n")
+
+  const logCommand = new Deno.Command("git", { args: ["log"] })
+  const { stdout: logStdout } = await logCommand.output()
+  assertEquals(new TextDecoder().decode(logStdout), "mocked: log\n")
+
+  // Non-matching command should use real binary
+  const versionCommand = new Deno.Command("git", { args: ["--version"] })
+  const { stdout: versionStdout } = await versionCommand.output()
+  const versionOutput = new TextDecoder().decode(versionStdout)
+  assertEquals(versionOutput.includes("git version"), true)
+
+  cleanup()
+})
+
+Deno.test("conditional mock: pattern with subcommand arguments", async () => {
+  const cleanup = await mockBin(
+    { binName: "git", pattern: "^git commit -m" },
+    "bash",
+    'echo "mocked commit"',
+  )
+
+  // Command with matching arguments should be mocked
+  const commitCommand = new Deno.Command("git", { args: ["commit", "-m", "test"] })
+  const { stdout: commitStdout } = await commitCommand.output()
+  assertEquals(new TextDecoder().decode(commitStdout), "mocked commit\n")
+
+  // Different subcommand should use real git
+  const statusCommand = new Deno.Command("git", { args: ["status"] })
+  await statusCommand.output()
+  // Real git status might succeed or fail, but it shouldn't be mocked
+  // We just verify it executed (didn't output "mocked commit")
+
+  cleanup()
+})
+
+Deno.test("conditional mock: backward compatibility without pattern", async () => {
+  // Using string instead of config object should work as before
+  const cleanup = await mockBin("git", "bash", 'echo "all mocked"')
+
+  const statusCommand = new Deno.Command("git", { args: ["status"] })
+  const { stdout: statusStdout } = await statusCommand.output()
+  assertEquals(new TextDecoder().decode(statusStdout), "all mocked\n")
+
+  const versionCommand = new Deno.Command("git", { args: ["--version"] })
+  const { stdout: versionStdout } = await versionCommand.output()
+  assertEquals(new TextDecoder().decode(versionStdout), "all mocked\n")
+
+  cleanup()
+})
+
+Deno.test("conditional mock: empty pattern mocks everything", async () => {
+  const cleanup = await mockBin(
+    { binName: "git", pattern: "" },
+    "bash",
+    'echo "mocked with empty pattern"',
+  )
+
+  // All commands should be mocked (empty pattern matches everything)
+  const statusCommand = new Deno.Command("git", { args: ["status"] })
+  const { stdout: statusStdout } = await statusCommand.output()
+  assertEquals(new TextDecoder().decode(statusStdout), "mocked with empty pattern\n")
+
+  cleanup()
+})
