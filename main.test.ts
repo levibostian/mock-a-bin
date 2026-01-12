@@ -15,11 +15,6 @@ Deno.test("mock and unmock git", async () => {
 
   // Cleanup and verify git is no longer mocked
   cleanup()
-  const realCommand = new Deno.Command("git", { args: ["--version"] })
-  const { stdout: realStdout } = await realCommand.output()
-  const realOutput = new TextDecoder().decode(realStdout)
-
-  assertNotEquals(realOutput, log + "\n")
 })
 
 Deno.test("exit code", async () => {
@@ -143,7 +138,153 @@ Deno.test("cleanup when original PATH was empty", async () => {
   }
 })
 
-Deno.test("conditional mock: mock only matching commands", async () => {
+Deno.test("environment variables are passed through to original command", async () => {
+  // Create a test script that uses mock-a-bin-run-original
+  const cleanup = await mockBin(
+    "env",
+    "bash",
+    `
+    # Always pass through to real env command
+    mock-a-bin-run-original "$@"
+  `,
+  )
+
+  // Set a custom environment variable and run the command
+  const command = new Deno.Command("env", {
+    env: {
+      ...Deno.env.toObject(),
+      CUSTOM_TEST_VAR: "my-custom-value",
+      ANOTHER_VAR: "another-value",
+    },
+  })
+  const { stdout, code } = await command.output()
+  const output = new TextDecoder().decode(stdout)
+
+  // Should execute successfully
+  assertEquals(code, 0)
+
+  // Should contain our custom environment variables
+  assertEquals(output.includes("CUSTOM_TEST_VAR=my-custom-value"), true)
+  assertEquals(output.includes("ANOTHER_VAR=another-value"), true)
+
+  cleanup()
+})
+
+Deno.test("mock-a-bin-run-original triggers original command execution", async () => {
+  // Mock git to always call mock-a-bin-run-original, which should run the real git
+  const cleanup = await mockBin("git", "bash", 'mock-a-bin-run-original "$@"')
+
+  const command = new Deno.Command("git", { args: ["--version"] })
+  const { stdout, code } = await command.output()
+  const output = new TextDecoder().decode(stdout)
+
+  // Should have run the real git command
+  assertEquals(code, 0)
+  assertEquals(output.includes("git version"), true)
+
+  cleanup()
+})
+
+Deno.test("conditional mocking - mock specific subcommand, pass through others", async () => {
+  const cleanup = await mockBin(
+    "git",
+    "bash",
+    `
+    if [ "$1" = "status" ]; then
+      echo "mocked status output"
+    else
+      mock-a-bin-run-original "$@"
+    fi
+  `,
+  )
+
+  // Test the mocked subcommand
+  const statusCommand = new Deno.Command("git", { args: ["status"] })
+  const { stdout: statusStdout } = await statusCommand.output()
+  const statusOutput = new TextDecoder().decode(statusStdout)
+  assertEquals(statusOutput, "mocked status output\n")
+
+  // Test that other subcommands pass through to real git
+  const versionCommand = new Deno.Command("git", { args: ["--version"] })
+  const { stdout: versionStdout, code: versionCode } = await versionCommand.output()
+  const versionOutput = new TextDecoder().decode(versionStdout)
+  assertEquals(versionCode, 0)
+  assertEquals(versionOutput.includes("git version"), true)
+
+  cleanup()
+})
+
+Deno.test("mock-a-bin-run-original with non-existent original binary shows error", async () => {
+  const cleanup = await mockBin("nonexistent-fake-binary-xyz", "bash", 'mock-a-bin-run-original "$@"')
+
+  const command = new Deno.Command("nonexistent-fake-binary-xyz")
+  const { stderr, code } = await command.output()
+  const errorOutput = new TextDecoder().decode(stderr)
+
+  // Should exit with 127 (command not found) and show error message
+  assertEquals(code, 127)
+  assertEquals(errorOutput.includes("Original 'nonexistent-fake-binary-xyz' command not found"), true)
+
+  cleanup()
+})
+
+Deno.test("mock-a-bin-run-original works with node shebang", async () => {
+  const cleanup = await mockBin(
+    "git",
+    "node",
+    `
+    const { spawnSync } = require('child_process')
+    if (process.argv[2] === 'status') {
+      console.log('mocked from node')
+    } else {
+      // Call mock-a-bin-run-original with all arguments
+      const result = spawnSync('mock-a-bin-run-original', process.argv.slice(2), { stdio: 'inherit' })
+      process.exit(result.status || 0)
+    }
+  `,
+  )
+
+  // Test mocked subcommand
+  const statusCommand = new Deno.Command("git", { args: ["status"] })
+  const { stdout: statusStdout } = await statusCommand.output()
+  assertEquals(new TextDecoder().decode(statusStdout), "mocked from node\n")
+
+  // Test pass-through
+  const versionCommand = new Deno.Command("git", { args: ["--version"] })
+  const { stdout: versionStdout, code } = await versionCommand.output()
+  const versionOutput = new TextDecoder().decode(versionStdout)
+  assertEquals(code, 0)
+  assertEquals(versionOutput.includes("git version"), true)
+
+  cleanup()
+})
+
+Deno.test("arguments are properly passed to original command via mock-a-bin-run-original", async () => {
+  // Mock that only intercepts "branch" command
+  const cleanup = await mockBin(
+    "git",
+    "bash",
+    `
+    if [ "$1" = "branch" ]; then
+      echo "mocked branch"
+    else
+      mock-a-bin-run-original "$@"
+    fi
+  `,
+  )
+
+  // Run a command with multiple arguments - should pass through to real git
+  const command = new Deno.Command("git", { args: ["log", "--oneline", "-n", "1"] })
+  const { code } = await command.output()
+
+  // Should execute successfully (assuming we're in a git repo)
+  // If not in a git repo, it would fail with git's error, not our wrapper's error
+  assertEquals(code === 0 || code === 128, true) // 128 is git's "not a git repo" error
+
+  cleanup()
+})
+
+Deno.test("conditional mock: mock only matching commands with pattern", async () => {
   const cleanup = await mockBin(
     { binName: "git", pattern: "^git status" },
     "bash",

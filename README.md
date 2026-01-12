@@ -29,9 +29,13 @@ console.log(output) // "mocked output"
 cleanup() // Restore original PATH
 ```
 
-### Conditional Mocking - Mock Only Specific Commands
+## Conditional Mocking
 
-You can use regex patterns to mock only specific commands while allowing others to run normally:
+Sometimes you want to mock only specific commands or subcommands while allowing others to run normally. There are two approaches:
+
+### Option 1: Pattern-Based Mocking
+
+Use regex patterns to automatically mock only specific commands while allowing others to run normally:
 
 ```ts
 import { mockBin } from "jsr:@levibostian/mock-a-bin"
@@ -59,7 +63,7 @@ console.log(new TextDecoder().decode(realStdout)) // Real gh output
 cleanup() // Restore original PATH
 ```
 
-### Pattern Matching Examples
+**Pattern Matching Examples:**
 
 ```ts
 // Mock only git status
@@ -83,6 +87,69 @@ await mockBin(
   'echo "Docker operation mocked"'
 )
 ```
+
+### Option 2: Script-Based Conditional Mocking with `mock-a-bin-run-original`
+
+When you create a mock with `mockBin()`, a special helper binary called `mock-a-bin-run-original` is automatically created. Your mock script can call this binary to execute the original command instead of the mock. This gives you more flexibility to make decisions in your script logic.
+
+```ts
+import { mockBin } from "jsr:@levibostian/mock-a-bin"
+
+// Mock only "git status" but pass through everything else to the real git
+const cleanup = await mockBin("git", "bash", `
+  if [ "$1" = "status" ]; then
+    echo "Everything is clean!"
+  else
+    mock-a-bin-run-original "$@"
+  fi
+`)
+
+// This uses the mock
+const status = new Deno.Command("git", { args: ["status"] })
+// Output: "Everything is clean!"
+
+// This runs the real git
+const version = new Deno.Command("git", { args: ["--version"] })
+// Output: "git version 2.x.x" (actual git output)
+
+cleanup()
+```
+
+This works with any interpreter (bash, node, python, etc.):
+
+```ts
+// Node.js example
+const cleanup = await mockBin("git", "node", `
+  const { spawnSync } = require('child_process')
+  if (process.argv[2] === 'status') {
+    console.log('Mocked status')
+  } else {
+    const result = spawnSync('mock-a-bin-run-original', process.argv.slice(2), { stdio: 'inherit' })
+    process.exit(result.status || 0)
+  }
+`)
+
+// Python example
+const cleanup = await mockBin("git", "python", `
+import sys
+import subprocess
+if len(sys.argv) > 1 and sys.argv[1] == 'status':
+    print('Mocked status')
+else:
+    sys.exit(subprocess.call(['mock-a-bin-run-original'] + sys.argv[1:]))
+`)
+```
+
+**Key Benefits:**
+- ✅ **Human-readable**: `mock-a-bin-run-original "$@"` is self-documenting
+- ✅ **Language-agnostic**: Works with bash, node, python, ruby, etc.
+- ✅ **Preserves everything**: Arguments, environment variables, exit codes all pass through
+- ✅ **Error handling**: Shows helpful error if original binary doesn't exist
+
+### Which Approach Should I Use?
+
+- **Use Pattern-Based Mocking** when you have simple, static matching criteria (e.g., "mock all `gh pr` commands")
+- **Use Script-Based Mocking with `mock-a-bin-run-original`** when you need more complex logic or want to inspect arguments/environment variables before deciding whether to mock
 
 ## Special Thanks
 
